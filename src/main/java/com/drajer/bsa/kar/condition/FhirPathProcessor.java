@@ -80,7 +80,7 @@ public class FhirPathProcessor implements BsaConditionProcessor {
 
     BooleanType value = (BooleanType) ppc.getValue();
 
-    if (value != null) {
+    if (value != null && value.getValue() != null) {
       logger.info(" Result from CQL FHIR Path Evaluation {}", value);
       return value.getValue();
     } else {
