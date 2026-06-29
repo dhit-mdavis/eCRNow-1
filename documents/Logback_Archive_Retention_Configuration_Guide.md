@@ -2,11 +2,11 @@
 
 ## Overview
 
-The eCRNow application uses **Logback** (via Spring Boot's `logback-spring.xml`) to manage application logging. Log files are rolled over daily and archived as compressed `.gz` files. This guide walks through the current configuration and how to adjust the number of days that archived log files are retained.
+The eCRNow application uses **Logback** (via Spring Boot's `logback-spring.xml`) to manage application logging. By default, rolling log files are archived daily. This guide walks through how to customize the number of days that archived log files are retained and how to cap total archive disk usage.
 
 ---
 
-## Current Configuration
+## Current Default Configuration
 
 The active logback configuration file is located at:
 
@@ -14,165 +14,160 @@ The active logback configuration file is located at:
 src/main/resources/logback-spring.xml
 ```
 
-The application already uses a fully custom `RollingFileAppender` — it does **not** delegate to Spring Boot's default `file-appender.xml`. The current configuration keeps **30 days** of daily archives and runs a history cleanup on startup:
+Its current contents delegate log file behavior to Spring Boot's built-in defaults:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml" />
+    <property name="LOG_FILE" value="${LOG_FILE:-${LOG_PATH:-${LOG_TEMP:-${java.io.tmpdir:-/tmp}}/}spring.log}"/>
+    <include resource="org/springframework/boot/logging/logback/file-appender.xml" />
+    <root level="INFO">
+        <appender-ref ref="FILE" />
+    </root>
+</configuration>
+```
 
-  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+Spring Boot's included `file-appender.xml` uses a `RollingFileAppender` with a `TimeBasedRollingPolicy`. The default retention is **7 days** (`maxHistory=7`).
 
-  <!-- Pull logging.file.name from Spring Boot config (application.properties) -->
-  <springProperty scope="context" name="LOG_FILE" source="logging.file.name"/>
+---
 
-  <!-- Fallback if logging.file.name is not set -->
-  <property name="LOG_FILE" value="${LOG_FILE:-${LOG_PATH:-${LOG_TEMP:-${java.io.tmpdir:-/tmp}}/}spring.log}"/>
+## How to Customize Archive Retention
 
-  <!-- Daily rolling file appender, keep 30 days -->
-  <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-    <file>${LOG_FILE}</file>
-    <append>true</append>
+To override the default and control how many days of archived log files are kept, replace the `<include>` reference to `file-appender.xml` with an explicit `RollingFileAppender` definition directly in `logback-spring.xml`.
 
-    <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-      <!-- Daily rollover — archive files are named with the date they were rolled -->
-      <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.gz</fileNamePattern>
+### Step 1 — Open the configuration file
 
-      <!-- Keep the last 30 days of archive files -->
-      <maxHistory>30</maxHistory>
+```
+src/main/resources/logback-spring.xml
+```
 
-      <!-- Delete archives older than maxHistory on application startup -->
-      <cleanHistoryOnStart>true</cleanHistoryOnStart>
-    </rollingPolicy>
+### Step 2 — Replace the default file-appender include with a custom appender
 
-    <encoder>
-      <pattern>${FILE_LOG_PATTERN}</pattern>
-    </encoder>
-  </appender>
+Below is a full example that keeps **30 days** of archived logs and caps total archive size at **1 GB**. Adjust the values in the highlighted properties to match your environment's retention requirements.
 
-  <root level="INFO">
-    <appender-ref ref="FILE"/>
-  </root>
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml" />
 
+    <!-- Define the active log file location -->
+    <property name="LOG_FILE" value="${LOG_FILE:-${LOG_PATH:-${LOG_TEMP:-${java.io.tmpdir:-/tmp}}/}spring.log}"/>
+
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+
+        <!-- Path to the current (active) log file -->
+        <file>${LOG_FILE}</file>
+
+        <encoder>
+            <pattern>${FILE_LOG_PATTERN}</pattern>
+            <charset>${FILE_LOG_CHARSET}</charset>
+        </encoder>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+
+            <!-- Archive file naming pattern — rolls over daily -->
+            <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.gz</fileNamePattern>
+
+            <!--
+                MAX HISTORY (days to retain)
+                ════════════════════════════
+                Controls the total number of archive files (one per day) to keep.
+                Files older than this number of days are automatically deleted
+                during the next rollover.
+
+                Default (Spring Boot): 7
+                Change this value to match your retention policy.
+            -->
+            <maxHistory>30</maxHistory>
+
+            <!--
+                TOTAL SIZE CAP (optional disk usage ceiling)
+                ════════════════════════════════════════════
+                Enforces an upper bound on the combined size of ALL archive files.
+                If the cap is reached, the oldest archives are removed even if
+                maxHistory has not been exceeded yet.
+
+                Common values: 500MB, 1GB, 5GB
+                Remove this element entirely to disable the cap.
+            -->
+            <totalSizeCap>1GB</totalSizeCap>
+
+        </rollingPolicy>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="FILE" />
+    </root>
 </configuration>
 ```
 
 ---
 
-## How to Adjust the Number of Days Archives Are Kept
-
-The retention period is controlled by a single element inside the `<rollingPolicy>` block:
-
-```xml
-<maxHistory>30</maxHistory>
-```
-
-**To change the retention period**, open `src/main/resources/logback-spring.xml` and update the integer value:
-
-```xml
-<!-- Keep 7 days (one week) -->
-<maxHistory>7</maxHistory>
-
-<!-- Keep 30 days (one month) — current setting -->
-<maxHistory>30</maxHistory>
-
-<!-- Keep 90 days (three months) -->
-<maxHistory>90</maxHistory>
-
-<!-- Keep 365 days (one year) -->
-<maxHistory>365</maxHistory>
-```
-
-At each daily rollover (midnight), Logback automatically deletes archives older than `maxHistory` days. Because `<cleanHistoryOnStart>true</cleanHistoryOnStart>` is also enabled, stale archives are also purged whenever the application starts up — useful after a period of downtime.
-
----
-
 ## Key Configuration Properties
 
-| Property | XML Element | Description | Current Value |
+| Property | XML Element | Description | Default |
 |---|---|---|---|
-| Days to retain archives | `<maxHistory>` | Number of daily archive files to keep; older files are automatically deleted | `30` |
-| Startup cleanup | `<cleanHistoryOnStart>` | Purges archives older than `maxHistory` when the application starts | `true` |
-| Archive filename pattern | `<fileNamePattern>` | Naming convention and compression format for daily archives | `${LOG_FILE}.%d{yyyy-MM-dd}.gz` |
-| Active log file path | `<file>` | Path to the current log file being written | Resolved from `logging.file.name` in `application.properties` |
-| Append mode | `<append>` | Appends to the existing log file rather than overwriting on startup | `true` |
+| Days to retain archives | `<maxHistory>` | Number of daily archive files to keep before the oldest are purged | `7` |
+| Total archive disk cap | `<totalSizeCap>` | Maximum combined size of all archive files on disk | Unlimited |
+| Archive filename pattern | `<fileNamePattern>` | Naming convention and rollover schedule for archive files | Daily (`.%d{yyyy-MM-dd}`) |
+| Active log file path | `<file>` | Path to the current log file being written | Resolved from `LOG_FILE` / `LOG_PATH` env vars |
 
 ### `<maxHistory>` Details
 
-- Value is a plain **integer** representing **calendar days**.
-- Logback deletes the oldest archive files once the count exceeds `maxHistory`.
-- Common reference values:
+- Value is an **integer** representing **calendar days**.
+- At each rollover (midnight by default), Logback checks the archive directory and deletes files older than `maxHistory` days.
+- Example values:
+  - `7` — one week (Spring Boot default)
+  - `30` — one month
+  - `90` — three months
+  - `365` — one year
 
-  | Value | Retention Period |
-  |---|---|
-  | `7` | One week |
-  | `14` | Two weeks |
-  | `30` | One month *(current)* |
-  | `90` | Three months |
-  | `365` | One year |
+### `<totalSizeCap>` Details
 
-### `<cleanHistoryOnStart>` Details
-
-- When set to `true`, Logback scans the archive directory at startup and removes any files that fall outside the `maxHistory` window.
-- This is particularly useful if the application was down for an extended period and missed one or more nightly cleanup cycles.
-- Set to `false` if you prefer cleanup to happen only at rollover time (midnight).
-
-### Adding a Total Size Cap (Optional)
-
-If disk space is a concern, you can also add a `<totalSizeCap>` element to set an upper bound on the combined size of all archive files. Archives are pruned oldest-first if the cap is exceeded, even if `maxHistory` has not been reached:
-
-```xml
-<rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-  <fileNamePattern>${LOG_FILE}.%d{yyyy-MM-dd}.gz</fileNamePattern>
-  <maxHistory>30</maxHistory>
-  <cleanHistoryOnStart>true</cleanHistoryOnStart>
-
-  <!-- Remove this element to disable the cap -->
-  <totalSizeCap>1GB</totalSizeCap>
-</rollingPolicy>
-```
-
-Accepted size suffixes: `KB`, `MB`, `GB`. Requires Logback **1.1.8 or later** (included in Spring Boot 2.x and 3.x).
+- Accepted size suffixes: `KB`, `MB`, `GB`.
+- Acts as a **secondary** pruning rule alongside `maxHistory`. If total archive size exceeds the cap, the oldest archived files are removed first regardless of age.
+- This property requires Logback **1.1.8 or later** (included in Spring Boot 2.x and 3.x).
 
 ---
 
-## Controlling the Log File Path
+## Controlling Log File Path via Environment Variables
 
-The log file location is resolved using `<springProperty>` to read `logging.file.name` directly from `application.properties`, with a fallback chain if that property is not set:
+The log file location is driven by environment variables or JVM system properties, checked in the following order of precedence:
 
-| Source | Example |
+| Variable | Description |
 |---|---|
-| `logging.file.name` in `application.properties` *(primary)* | `/opt/ecrnow/logs/ecrnow-app.log` |
-| `LOG_PATH` environment variable | `/opt/ecrnow/logs/spring.log` |
-| `LOG_TEMP` environment variable | `<LOG_TEMP>/spring.log` |
-| `java.io.tmpdir` JVM property | `/tmp/spring.log` |
+| `LOG_FILE` | Full path (including filename) to the active log file |
+| `LOG_PATH` | Directory path; the filename defaults to `spring.log` |
+| `LOG_TEMP` | Fallback temp directory |
+| `java.io.tmpdir` | JVM temp dir (last resort) |
 
-**Recommended — set the log file path in `application.properties`:**
-
+**Example — set log path in `application.properties`:**
 ```properties
-# Sets the full path and filename; logback-spring.xml reads this via <springProperty>
+logging.file.path=/opt/ecrnow/logs
+```
+
+**Example — set explicit log file name:**
+```properties
 logging.file.name=/opt/ecrnow/logs/ecrnow-app.log
 ```
 
-With this set, daily archives will be created as:
-
+When `logging.file.name` is set, the archive pattern in `logback-spring.xml` will produce files such as:
 ```
 /opt/ecrnow/logs/ecrnow-app.log.2025-06-28.gz
 /opt/ecrnow/logs/ecrnow-app.log.2025-06-29.gz
-/opt/ecrnow/logs/ecrnow-app.log.2025-06-30.gz
 ```
-
-Files older than `<maxHistory>` days are automatically removed.
 
 ---
 
 ## Applying the Change
 
-1. Open `src/main/resources/logback-spring.xml`.
-2. Update `<maxHistory>` to the desired number of days.
-3. Optionally add `<totalSizeCap>` if disk usage needs to be bounded.
-4. Rebuild and redeploy the application. Logback reads the configuration at startup — no additional reload step is required beyond the normal deployment process.
+1. Edit `src/main/resources/logback-spring.xml` with the custom appender shown above.
+2. Set `<maxHistory>` to your desired number of days.
+3. Optionally set `<totalSizeCap>` to prevent runaway disk usage.
+4. Rebuild and redeploy the application JAR or Docker container. Logback reads the configuration at startup — **no additional restart or reload step** is needed beyond the normal deployment process.
 
-> **Docker deployments:** Ensure the log directory is mounted as a named volume so archive files persist across container restarts. Without a volume, all archived logs are lost when the container is recreated.
+> **Note:** If the application is deployed via Docker, ensure the log directory is mounted as a volume so that archive files persist across container restarts. Without a volume mount, all archived logs are lost when the container is recreated.
 
 ---
 
@@ -180,9 +175,8 @@ Files older than `<maxHistory>` days are automatically removed.
 
 | Symptom | Likely Cause | Resolution |
 |---|---|---|
-| Old archives not being deleted | `maxHistory` not set or element is misplaced | Confirm `<maxHistory>` is nested inside `<rollingPolicy>`, not directly inside `<appender>` |
-| Archives not cleaned up after downtime | `cleanHistoryOnStart` is `false` or missing | Set `<cleanHistoryOnStart>true</cleanHistoryOnStart>` inside `<rollingPolicy>` |
-| All logs going to `/tmp` | `logging.file.name` not set in `application.properties` | Add `logging.file.name=/your/path/ecrnow-app.log` to `application.properties` |
+| Old archives not being deleted | `maxHistory` not set or misconfigured | Verify the `<maxHistory>` element is inside `<rollingPolicy>`, not inside `<appender>` |
+| All logs going to `/tmp` | `LOG_FILE` / `LOG_PATH` not set | Set `logging.file.name` or `logging.file.path` in `application.properties` |
 | `totalSizeCap` has no effect | Logback version too old | Confirm Spring Boot version is 2.x or 3.x (Logback ≥ 1.1.8) |
 | Configuration changes not applied | Cached build artifact | Clean and rebuild: `mvn clean package` |
 
@@ -192,4 +186,4 @@ Files older than `<maxHistory>` days are automatically removed.
 
 - [Logback RollingFileAppender Documentation](https://logback.qos.ch/manual/appenders.html#RollingFileAppender)
 - [Spring Boot Logging Reference](https://docs.spring.io/spring-boot/docs/current/reference/html/features.html#features.logging)
-- eCRNow active logback config: [`src/main/resources/logback-spring.xml`](../src/main/resources/logback-spring.xml)
+- eCRNow active logback config: `src/main/resources/logback-spring.xml`
