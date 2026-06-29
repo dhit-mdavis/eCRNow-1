@@ -60,8 +60,7 @@ Below is a full example that keeps **30 days** of archived logs and caps total a
         <file>${LOG_FILE}</file>
 
         <encoder>
-            <pattern>${FILE_LOG_PATTERN}</pattern>
-            <charset>${FILE_LOG_CHARSET}</charset>
+            <pattern>${FILE_LOG_PATTERN}</pattern>            
         </encoder>
 
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
