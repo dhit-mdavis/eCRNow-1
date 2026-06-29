@@ -90,7 +90,7 @@ Below is a full example that keeps **30 days** of archived logs and caps total a
                 Common values: 500MB, 1GB, 5GB
                 Remove this element entirely to disable the cap.
             -->
-            <totalSizeCap>1GB</totalSizeCap>
+            <!-- <totalSizeCap>1GB</totalSizeCap> -->
 
         </rollingPolicy>
     </appender>
